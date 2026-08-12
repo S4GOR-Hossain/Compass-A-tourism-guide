@@ -13,6 +13,9 @@
 require_once __DIR__ . '/weather_api_key.php';
 define('OPENWEATHER_BASE_URL', 'https://api.openweathermap.org/data/2.5/forecast');
 
+// How often cached forecasts are allowed to go stale before we refetch.
+define('WEATHER_REFRESH_HOURS', 5);
+
 /**
  * Fetch + cache a 5-day forecast summary for one destination.
  * Returns an array of daily summaries: date, condition, temp_min/max,
@@ -139,10 +142,15 @@ function weatherScoreLabel(int $score): array
 
 function getCachedForecast(PDO $pdo, int $destinationId): array
 {
+    // Only counts as "cached" if today's row was fetched within the last
+    // WEATHER_REFRESH_HOURS hours — otherwise it's treated as stale and
+    // getForecastForDestination() will hit the API again.
     $stmt = $pdo->prepare(
         "SELECT forecast_date, condition_main, temp_min, temp_max, rain_probability, wind_speed, weather_score
          FROM weather_logs
-         WHERE destination_id = :id AND forecast_date >= CURDATE()
+         WHERE destination_id = :id
+           AND forecast_date >= CURDATE()
+           AND fetched_at >= (NOW() - INTERVAL " . WEATHER_REFRESH_HOURS . " HOUR)
          ORDER BY forecast_date ASC LIMIT 5"
     );
     $stmt->execute(['id' => $destinationId]);
@@ -173,6 +181,28 @@ function upsertWeatherLog(PDO $pdo, int $destinationId, string $date, string $co
         'wind'  => $wind,
         'score' => $score,
     ]);
+}
+
+/**
+ * Refresh (fetch or reuse cache) the forecast for every destination that has
+ * coordinates set, so the "Best weather right now" table never shows
+ * "Not fetched yet" for destinations nobody has manually searched.
+ * getForecastForDestination() itself is cache-aware (see WEATHER_REFRESH_HOURS),
+ * so calling this repeatedly is cheap — it only calls the live API for
+ * destinations whose cache is missing or older than 5 hours.
+ * Safe to call from a page (small demo dataset) or from a cron job.
+ */
+function refreshAllDestinationsWeather(PDO $pdo): void
+{
+    $destinations = $pdo->query(
+        "SELECT destination_id, latitude, longitude
+         FROM destinations
+         WHERE latitude IS NOT NULL AND longitude IS NOT NULL"
+    )->fetchAll();
+
+    foreach ($destinations as $d) {
+        getForecastForDestination($pdo, (int) $d['destination_id'], (float) $d['latitude'], (float) $d['longitude']);
+    }
 }
 
 /**
