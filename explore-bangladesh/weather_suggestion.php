@@ -5,6 +5,10 @@ $pageTitle = 'Weather Planner';
 
 $destinations = $pdo->query("SELECT destination_id, name FROM destinations ORDER BY name")->fetchAll();
 
+// Make sure every destination has a forecast cached (fetches only what's
+// missing or older than WEATHER_REFRESH_HOURS — see config/weather_api.php).
+refreshAllDestinationsWeather($pdo);
+
 // Build a weather-ranked list of ALL outdoor destinations using cached forecasts (today).
 $ranked = $pdo->query(
     "SELECT d.destination_id, d.name, d.is_outdoor, c.category_name, c.icon, dist.district_name,
@@ -55,9 +59,6 @@ include __DIR__ . '/includes/header.php';
           </div>
           <button type="submit" class="btn btn-primary btn-block">Check forecast &amp; get advice</button>
         </form>
-        <p style="font-size:.78rem; color:var(--ink-soft); margin-top:14px;">
-          Forecasts come from OpenWeatherMap's 5-day/3-hour API. Add your free API key in <code>config/weather_api.php</code> to enable live data — sample destinations already include cached scores for demo purposes.
-        </p>
       </div>
       <div id="weatherResult">
         <div class="info-note">Choose a destination and date to see the forecast strip and a travel recommendation here.</div>
